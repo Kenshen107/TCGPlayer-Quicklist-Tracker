@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -77,8 +78,47 @@ def _walk_json(node):
             yield from _walk_json(v)
 
 
+PRINTED_RE = re.compile(r"Printed\s+(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2})")
+
+
+def parse_pdf(path):
+    """Parse a Quicklist 'Print' PDF. Returns (cards, printed_at_iso or None).
+
+    Needs poppler's `pdftotext`. Rows are split on runs of 2+ spaces:
+    name | set | cond | printing | lang | "qty #" | low | market
+    """
+    try:
+        text = subprocess.run(
+            ["pdftotext", "-layout", path, "-"], capture_output=True, text=True, check=True
+        ).stdout
+    except FileNotFoundError:
+        raise ValueError("pdftotext not found (install poppler-utils / poppler for Windows)")
+    except subprocess.CalledProcessError as e:
+        raise ValueError(f"pdftotext failed: {e.stderr.strip()}")
+    cards = []
+    for line in text.splitlines():
+        parts = re.split(r"\s{2,}", line.strip())
+        if len(parts) != 8 or not re.fullmatch(r"\d+\s+\d+", parts[5]):
+            continue
+        name, set_, cond, printing, lang, qty_no, low, market = parts
+        low, market = parse_price(low), parse_price(market)
+        if low is None and not market:  # "—" low and $0.00 market = no data
+            market = None
+        cards.append({"name": name, "set": set_, "condition": cond, "printing": printing,
+                      "language": lang, "quantity": int(qty_no.split()[0]),
+                      "low": low, "market": market})
+    m = PRINTED_RE.search(text)
+    printed = None
+    if m:
+        mo, d, y, h, mi = m.groups()
+        printed = f"{y}-{mo}-{d}T{h}:{mi}:00"  # local time as printed
+    return cards, printed
+
+
 def parse_file(path):
-    """Return a list of card dicts from a CSV/TSV/JSON export."""
+    """Return a list of card dicts from a PDF/CSV/TSV/JSON export."""
+    if path.lower().endswith(".pdf"):
+        return parse_pdf(path)[0]
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         text = f.read()
     stripped = text.lstrip()
@@ -111,9 +151,9 @@ def connect(db):
 KEY = ("name", "set", "condition", "printing", "language")
 
 
-def record(con, cards, source=""):
+def record(con, cards, source="", ts=None):
     """Insert a reading per card unless its prices match that card's latest reading."""
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ts = ts or datetime.now(timezone.utc).isoformat(timespec="seconds")
     added = 0
     for c in cards:
         last = con.execute(
@@ -165,10 +205,20 @@ def history(con, name, out=sys.stdout):
         print("No matching readings.", file=out)
 
 
+def ingest(con, path):
+    """Parse one file and record it; PDFs use their printed timestamp."""
+    ts = None
+    if path.lower().endswith(".pdf"):
+        cards, ts = parse_pdf(path)
+    else:
+        cards = parse_file(path)
+    return record(con, cards, os.path.basename(path), ts), len(cards)
+
+
 def _candidates(path):
     if os.path.isdir(path):
         for f in os.listdir(path):
-            if f.lower().endswith((".csv", ".tsv", ".json", ".txt")):
+            if f.lower().endswith((".pdf", ".csv", ".tsv", ".json", ".txt")):
                 yield os.path.join(path, f)
     else:
         yield path
@@ -185,8 +235,8 @@ def watch(path, db, interval):
                 if seen.get(f) == mtime:
                     continue
                 seen[f] = mtime
-                n = record(con, parse_file(f), os.path.basename(f))
-                print(f"{datetime.now():%H:%M:%S} {os.path.basename(f)}: {n} new reading(s)")
+                n = ingest(con, f)
+                print(f"{datetime.now():%H:%M:%S} {os.path.basename(f)}: {n[0]} new reading(s) from {n[1]} card(s)")
             except (OSError, ValueError, csv.Error) as e:
                 print(f"skipping {f}: {e}", file=sys.stderr)
         time.sleep(interval)
@@ -212,11 +262,15 @@ def main(argv=None):
         return 0
     con = connect(a.db)
     if a.cmd == "import":
-        cards = parse_file(a.file)
-        if not cards:
-            print("No cards with a name and Low/Market price found; check the file's headers.", file=sys.stderr)
+        try:
+            added, total = ingest(con, a.file)
+        except (OSError, ValueError) as e:
+            print(e, file=sys.stderr)
             return 1
-        print(f"{record(con, cards, os.path.basename(a.file))} new reading(s) from {len(cards)} card(s)")
+        if not total:
+            print("No cards with a name and Low/Market price found in the file.", file=sys.stderr)
+            return 1
+        print(f"{added} new reading(s) from {total} card(s)")
     elif a.cmd == "report":
         report(con)
     elif a.cmd == "history":

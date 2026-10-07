@@ -31,3 +31,13 @@ def test_json_and_missing_price(tmp_path):
     f = write(tmp_path, "p.json", '{"items":[{"Product Name":"X","Low Price":"-","Market":"$1,000.50"}]}')
     cards = tracker.parse_file(f)
     assert cards[0]["low"] is None and cards[0]["market"] == 1000.50
+
+
+def test_pdf_export():
+    pdf = os.path.join(os.path.dirname(__file__), "sample_quicklist.pdf")
+    cards, printed = tracker.parse_pdf(pdf)
+    assert len(cards) == 5 and printed == "2026-10-07T17:52:00"
+    k, t, _, _, r = cards
+    assert (k["low"], k["market"]) == (None, None)  # "—" low, $0.00 market
+    assert (t["low"], t["market"]) == (0.10, 0.32)
+    assert r["name"] == "Ragavan, Nimble Pilferer (Borderless)" and r["low"] == 93.99
