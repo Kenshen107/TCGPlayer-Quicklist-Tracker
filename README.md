@@ -33,3 +33,20 @@ per option). Edit `credit.json` to change options: each has a `basis`
 (`low`, `market`, `lower`, `higher`) and a `percent`; add or remove options
 freely. `condition_multipliers` scale offers by condition, and
 `min_offer_per_card` sets a floor. Unpriced cards are offered $0 and listed.
+
+## Pop-up window (no extra steps for staff)
+
+```
+python window.py "C:\path\to\pdf\folder"
+```
+
+Stays on top. When a new Quicklist PDF appears in the folder it jumps to the
+front, shows each card with its Low, Market and lowest price ever seen, plus
+the totals and each credit option's offer. Change an option's basis or percent
+in the window and totals update instantly; "Save credit settings" writes them
+to `credit.json`. Every PDF is also logged to the price history.
+
+Setup: install a virtual PDF printer (e.g. PDFCreator) set to auto-save PDFs
+to that folder and also forward to the real printer, so staff press Print once
+as usual. Needs Python with Tkinter (included with the python.org Windows
+installer) and poppler's `pdftotext` on PATH.

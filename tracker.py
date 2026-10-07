@@ -228,17 +228,17 @@ def _basis_price(c, basis):
     return min(vals) if basis == "lower" else max(vals)
 
 
-def quote(cards, config, out=sys.stdout):
-    """Print per-card offers and totals for each credit option in `config`."""
+def compute_offers(cards, config):
+    """Per-card offers and totals. Returns (rows, totals, qty, low_total, market_total).
+
+    rows: list of (card, [line total per option or None]); totals: {option name: total}.
+    """
     opts = config["options"]
     mult = config.get("condition_multipliers", {})
     floor = config.get("min_offer_per_card", 0.0)
-    fmt = lambda v: f"${v:,.2f}"
     totals = {o["name"]: 0.0 for o in opts}
     qty = low_t = mkt_t = 0
-    unpriced = []
-    head = f"{'Card':38} {'Cond':4} {'Qty':>3} {'Low':>8} {'Market':>8}" + "".join(f" {o['name'][:12]:>12}" for o in opts)
-    print(head, file=out)
+    rows = []
     for c in cards:
         q = c["quantity"]
         qty += q
@@ -249,21 +249,42 @@ def quote(cards, config, out=sys.stdout):
         for o in opts:
             base = _basis_price(c, o["basis"])
             if base is None:
-                cells.append("-")
+                cells.append(None)
                 continue
-            each = max(base * o["percent"] / 100 * cm, floor)
-            totals[o["name"]] += each * q
-            cells.append(fmt(each * q))
-        if all(x == "-" for x in cells):
+            line = max(base * o["percent"] / 100 * cm, floor) * q
+            totals[o["name"]] += line
+            cells.append(line)
+        rows.append((c, cells))
+    return rows, totals, qty, low_t, mkt_t
+
+
+def quote(cards, config, out=sys.stdout):
+    """Print per-card offers and totals for each credit option in `config`."""
+    opts = config["options"]
+    rows, totals, qty, low_t, mkt_t = compute_offers(cards, config)
+    fmt = lambda v: "-" if v is None else f"${v:,.2f}"
+    head = f"{'Card':38} {'Cond':4} {'Qty':>3} {'Low':>8} {'Market':>8}" + "".join(f" {o['name'][:12]:>12}" for o in opts)
+    print(head, file=out)
+    unpriced = []
+    for c, cells in rows:
+        if all(x is None for x in cells):
             unpriced.append(c["name"])
-        lo = "-" if c["low"] is None else fmt(c["low"])
-        mk = "-" if c["market"] is None else fmt(c["market"])
-        print(f"{c['name'][:38]:38} {c['condition']:4} {q:>3} {lo:>8} {mk:>8}" + "".join(f" {x:>12}" for x in cells), file=out)
+        print(f"{c['name'][:38]:38} {c['condition']:4} {c['quantity']:>3} {fmt(c['low']):>8} {fmt(c['market']):>8}" + "".join(f" {fmt(x):>12}" for x in cells), file=out)
     print("-" * len(head), file=out)
     print(f"{'TOTAL':38} {'':4} {qty:>3} {fmt(low_t):>8} {fmt(mkt_t):>8}" + "".join(f" {fmt(totals[o['name']]):>12}" for o in opts), file=out)
     if unpriced:
         print(f"Note: no price for {len(unpriced)} card(s), offered $0: {', '.join(unpriced)}", file=out)
     return totals
+
+
+def lowest_seen(con, c):
+    """Lowest Low Price ever recorded for this card (None if never priced)."""
+    row = con.execute(
+        'SELECT MIN(low) FROM readings WHERE name=? AND "set"=? AND condition=? '
+        "AND printing=? AND language=?",
+        [c[k] for k in KEY],
+    ).fetchone()
+    return row[0]
 
 
 def _candidates(path):
