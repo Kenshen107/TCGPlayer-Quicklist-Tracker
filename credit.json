@@ -1,0 +1,9 @@
+{
+  "_help": "basis: low | market | lower | higher. percent: offer as % of that price. Edit freely; no code changes needed.",
+  "options": [
+    {"name": "Cash",         "basis": "low",    "percent": 50},
+    {"name": "Store credit", "basis": "market", "percent": 70}
+  ],
+  "condition_multipliers": {"NM": 1.0, "LP": 0.9, "MP": 0.75, "HP": 0.5, "DG": 0.25},
+  "min_offer_per_card": 0.0
+}

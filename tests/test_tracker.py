@@ -41,3 +41,15 @@ def test_pdf_export():
     assert (k["low"], k["market"]) == (None, None)  # "—" low, $0.00 market
     assert (t["low"], t["market"]) == (0.10, 0.32)
     assert r["name"] == "Ragavan, Nimble Pilferer (Borderless)" and r["low"] == 93.99
+
+
+def test_quote_totals():
+    cards = [
+        {"name": "A", "set": "", "condition": "NM", "printing": "", "language": "", "quantity": 2, "low": 1.00, "market": 2.00},
+        {"name": "B", "set": "", "condition": "HP", "printing": "", "language": "", "quantity": 1, "low": None, "market": None},
+    ]
+    cfg = {"options": [{"name": "Cash", "basis": "low", "percent": 50},
+                       {"name": "Credit", "basis": "market", "percent": 70}],
+           "condition_multipliers": {"NM": 1.0, "HP": 0.5}}
+    t = tracker.quote(cards, cfg, io.StringIO())
+    assert t == {"Cash": 1.00, "Credit": 2.80}

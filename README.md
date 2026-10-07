@@ -20,3 +20,16 @@ means no listing, and a $0.00 Market beside it is treated as no data.
 CSV/TSV/JSON columns are matched by header name (Product Name, Set, Condition, Printing,
 Lang., Qty., Low Price, Market); CSV/TSV and JSON are supported.
 Requires Python 3.8+, no dependencies. Tests: `pytest tests`.
+
+## Totals and credit offers
+
+```
+python tracker.py quote list.pdf              # uses credit.json
+python tracker.py quote list.pdf -c other.json
+```
+
+Prints each card's offer and the totals (quantity, Low, Market, and one column
+per option). Edit `credit.json` to change options: each has a `basis`
+(`low`, `market`, `lower`, `higher`) and a `percent`; add or remove options
+freely. `condition_multipliers` scale offers by condition, and
+`min_offer_per_card` sets a floor. Unpriced cards are offered $0 and listed.

@@ -4,6 +4,7 @@
 Usage:
   tracker.py import FILE            record one export/project file
   tracker.py watch PATH [-i SECS]   poll a file or folder, record on change
+  tracker.py quote FILE [-c credit.json]   totals + cash/credit offers
   tracker.py report [--db DB]       lowest Low Price / Market seen per card
   tracker.py history NAME           every reading for cards matching NAME
 """
@@ -215,6 +216,56 @@ def ingest(con, path):
     return record(con, cards, os.path.basename(path), ts), len(cards)
 
 
+def _basis_price(c, basis):
+    low, mkt = c["low"], c["market"]
+    vals = [v for v in (low, mkt) if v is not None]
+    if basis == "low":
+        return low
+    if basis == "market":
+        return mkt
+    if not vals:
+        return None
+    return min(vals) if basis == "lower" else max(vals)
+
+
+def quote(cards, config, out=sys.stdout):
+    """Print per-card offers and totals for each credit option in `config`."""
+    opts = config["options"]
+    mult = config.get("condition_multipliers", {})
+    floor = config.get("min_offer_per_card", 0.0)
+    fmt = lambda v: f"${v:,.2f}"
+    totals = {o["name"]: 0.0 for o in opts}
+    qty = low_t = mkt_t = 0
+    unpriced = []
+    head = f"{'Card':38} {'Cond':4} {'Qty':>3} {'Low':>8} {'Market':>8}" + "".join(f" {o['name'][:12]:>12}" for o in opts)
+    print(head, file=out)
+    for c in cards:
+        q = c["quantity"]
+        qty += q
+        low_t += (c["low"] or 0) * q
+        mkt_t += (c["market"] or 0) * q
+        cm = mult.get(c["condition"], 1.0)
+        cells = []
+        for o in opts:
+            base = _basis_price(c, o["basis"])
+            if base is None:
+                cells.append("-")
+                continue
+            each = max(base * o["percent"] / 100 * cm, floor)
+            totals[o["name"]] += each * q
+            cells.append(fmt(each * q))
+        if all(x == "-" for x in cells):
+            unpriced.append(c["name"])
+        lo = "-" if c["low"] is None else fmt(c["low"])
+        mk = "-" if c["market"] is None else fmt(c["market"])
+        print(f"{c['name'][:38]:38} {c['condition']:4} {q:>3} {lo:>8} {mk:>8}" + "".join(f" {x:>12}" for x in cells), file=out)
+    print("-" * len(head), file=out)
+    print(f"{'TOTAL':38} {'':4} {qty:>3} {fmt(low_t):>8} {fmt(mkt_t):>8}" + "".join(f" {fmt(totals[o['name']]):>12}" for o in opts), file=out)
+    if unpriced:
+        print(f"Note: no price for {len(unpriced)} card(s), offered $0: {', '.join(unpriced)}", file=out)
+    return totals
+
+
 def _candidates(path):
     if os.path.isdir(path):
         for f in os.listdir(path):
@@ -250,6 +301,9 @@ def main(argv=None):
     w = sub.add_parser("watch")
     w.add_argument("path")
     w.add_argument("-i", "--interval", type=float, default=5)
+    q = sub.add_parser("quote")
+    q.add_argument("file")
+    q.add_argument("-c", "--config", default="credit.json")
     sub.add_parser("report")
     sub.add_parser("history").add_argument("name")
     a = ap.parse_args(argv)
@@ -259,6 +313,15 @@ def main(argv=None):
             watch(a.path, a.db, a.interval)
         except KeyboardInterrupt:
             pass
+        return 0
+    if a.cmd == "quote":
+        try:
+            with open(a.config) as f:
+                config = json.load(f)
+            quote(parse_file(a.file), config)
+        except (OSError, ValueError, KeyError) as e:
+            print(f"quote failed: {e}", file=sys.stderr)
+            return 1
         return 0
     con = connect(a.db)
     if a.cmd == "import":
